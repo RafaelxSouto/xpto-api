@@ -6,21 +6,15 @@ import br.com.xpto.core.exceptions.UnauthorizedException;
 import br.com.xpto.modules.auth.dto.request.LoginRequest;
 import br.com.xpto.modules.auth.dto.request.RegisterRequest;
 import br.com.xpto.modules.auth.dto.response.AuthResponse;
+import br.com.xpto.modules.auth.dto.response.AuthResult;
 import br.com.xpto.modules.auth.entity.UserSession;
 import br.com.xpto.modules.auth.repository.UserSessionRepository;
 import br.com.xpto.modules.user.entity.User;
 import br.com.xpto.modules.user.repository.UserRepository;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseCookie;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,7 +31,7 @@ public class AuthService {
   private final PasswordEncoder passwordEncoder;
 
   @Transactional
-  public AuthResponse register(RegisterRequest req, HttpServletRequest httpReq, HttpServletResponse httpRes) {
+  public User register(RegisterRequest req) {
     if (userRepository.existsByEmail(req.email())) {
       throw new BadRequestException("Email já cadastrado");
     }
@@ -46,21 +40,19 @@ public class AuthService {
       throw new BadRequestException("CPF já cadastrado");
     }
 
-    User user = User.builder()
-        .fullName(req.fullName())
-        .email(req.email())
-        .password(passwordEncoder.encode(req.password()))
-        .cpf(req.cpf())
-        .phone(req.phone())
-        .birthDate(req.birthDate())
-        .build();
+    if (userRepository.existsByUserName(req.userName())) {
+      throw new BadRequestException("Nome de usuário já cadastrado");
+    }
 
-    userRepository.save(user);
-    return createSession(user, httpReq, httpRes);
+    User user = User.builder().fullName(req.fullName()).userName(req.userName()).email(req.email())
+        .password(passwordEncoder.encode(req.password())).cpf(req.cpf()).phone(req.phone())
+        .birthDate(req.birthDate()).build();
+
+    return userRepository.save(user);
   }
 
   @Transactional
-  public AuthResponse login(LoginRequest req, HttpServletRequest httpReq, HttpServletResponse httpRes) {
+  public AuthResult login(LoginRequest req) {
     User user = userRepository.findByEmail(req.email())
         .orElseThrow(InvalidCredentialsException::new);
 
@@ -68,13 +60,16 @@ public class AuthService {
       throw new InvalidCredentialsException();
     }
 
-    return createSession(user, httpReq, httpRes);
+    return createSession(user);
   }
 
   @Transactional
-  public AuthResponse refresh(HttpServletRequest httpReq, HttpServletResponse httpRes) {
-    String rawToken = extractRefreshCookie(httpReq);
-    String tokenHash = jwtService.hashToken(rawToken);
+  public AuthResult refresh(String refreshToken) {
+    if (refreshToken == null) {
+      throw new UnauthorizedException("Sem refresh token");
+    }
+
+    String tokenHash = jwtService.hashToken(refreshToken);
 
     UserSession session = sessionRepository.findByRefreshToken(tokenHash)
         .orElseThrow(() -> new UnauthorizedException("Sessão inválida"));
@@ -83,68 +78,38 @@ public class AuthService {
       throw new UnauthorizedException("Sessão expirada");
     }
 
-    session.setIsActive(true);
+    session.setIsActive(false);
     sessionRepository.save(session);
 
-    return toAuthResponse(jwtService.generateAccessToken(session.getUser()), session.getUser());
+    return createSession(session.getUser());
   }
 
   @Transactional
-  public void logout(HttpServletRequest httpReq, HttpServletResponse httpRes) {
-    try {
-      String rawToken = extractRefreshCookie(httpReq);
-      String tokenHash = jwtService.hashToken(rawToken);
-      sessionRepository.findByRefreshToken(tokenHash)
-          .ifPresent(s -> {
-            s.setIsActive(false);
-            sessionRepository.save(s);
-          });
-    } catch (UnauthorizedException ignored) {
+  public void logout(String refreshToken) {
+    if (refreshToken == null) {
+      return;
     }
 
-    setRefreshCookie(httpRes, "", Duration.ZERO);
+    String tokenHash = jwtService.hashToken(refreshToken);
+    sessionRepository.findByRefreshToken(tokenHash).ifPresent(s -> {
+      s.setIsActive(false);
+      sessionRepository.save(s);
+    });
   }
 
-  // ── privados
+  // ── private
 
-  private AuthResponse createSession(User user, HttpServletRequest httpReq, HttpServletResponse httpRes) {
+  private AuthResult createSession(User user) {
     String rawToken = UUID.randomUUID().toString();
     String tokenHash = jwtService.hashToken(rawToken);
 
-    UserSession session = UserSession.builder()
-        .user(user)
-        .refreshToken(tokenHash)
-        .deviceInfo(httpReq.getHeader("User-Agent"))
-        .ipAddress(httpReq.getRemoteAddr())
-        .expiresAt(Instant.now().plus(SESSION_EXPIRATION_DAYS, ChronoUnit.DAYS))
-        .build();
+    UserSession session = UserSession.builder().user(user).refreshToken(tokenHash)
+        .expiresAt(Instant.now().plus(SESSION_EXPIRATION_DAYS, ChronoUnit.DAYS)).build();
 
     sessionRepository.save(session);
-    setRefreshCookie(httpRes, rawToken, Duration.ofDays(SESSION_EXPIRATION_DAYS));
 
-    return toAuthResponse(jwtService.generateAccessToken(user), user);
-  }
-
-  private void setRefreshCookie(HttpServletResponse res, String value, Duration maxAge) {
-    ResponseCookie cookie = ResponseCookie.from("refresh_token", value)
-        .httpOnly(true)
-        .secure(true)
-        .sameSite("Strict")
-        .path("/auth/refresh")
-        .maxAge(maxAge)
-        .build();
-    res.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-  }
-
-  private String extractRefreshCookie(HttpServletRequest req) {
-    if (req.getCookies() == null) {
-      throw new UnauthorizedException("Sem refresh token");
-    }
-    return Arrays.stream(req.getCookies())
-        .filter(c -> "refresh_token".equals(c.getName()))
-        .findFirst()
-        .map(Cookie::getValue)
-        .orElseThrow(() -> new UnauthorizedException("Sem refresh token"));
+    AuthResponse authResponse = toAuthResponse(jwtService.generateAccessToken(user), user);
+    return new AuthResult(authResponse, rawToken);
   }
 
   private AuthResponse toAuthResponse(String accessToken, User user) {
