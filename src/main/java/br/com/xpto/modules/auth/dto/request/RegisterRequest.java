@@ -9,23 +9,34 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
 public record RegisterRequest(
-    @NotBlank @Size(min = 3, max = 100)
+    @NotBlank(message = "Nome é obrigatório")
+    @Size(min = 3, max = 100, message = "Nome deve ter entre 3 e 100 caracteres")
     @Pattern(regexp = "^[\\p{L} '\\-]+$", message = "Nome não pode conter números ou caracteres especiais")
     String fullName,
 
-    @NotBlank @Email @Size(max = 100)
+    @NotBlank(message = "Nome de usuário é obrigatório")
+    @Size(min = 3, max = 30, message = "Nome de usuário deve ter entre 3 e 30 caracteres")
+    @Pattern(regexp = "^[a-zA-Z0-9._\\-]+$", message = "Nome de usuário só pode conter letras, números, ponto, underscore ou hífen")
+    String userName,
+
+    @NotBlank(message = "E-mail é obrigatório")
+    @Email(message = "E-mail em formato inválido")
+    @Size(max = 100, message = "E-mail deve ter no máximo 100 caracteres")
     String email,
 
-    @NotBlank @Size(min = 8, max = 100)
+    @NotBlank(message = "Senha é obrigatória")
+    @Size(min = 8, max = 100, message = "Senha deve ter no mínimo 8 caracteres")
     String password,
 
-    @NotBlank @Pattern(regexp = "^[0-9]{11}$")
+    @NotBlank(message = "CPF é obrigatório")
+    @Pattern(regexp = "^[0-9]{11}$", message = "CPF deve conter exatamente 11 dígitos numéricos")
     String cpf,
 
-    @Size(max = 20)
+    @Size(max = 20, message = "Telefone deve ter no máximo 20 caracteres")
     String phone,
 
-    @NotNull @Past(message = "Data de nascimento inválida")
+    @NotNull(message = "Data de nascimento é obrigatória")
+    @Past(message = "Data de nascimento inválida")
     LocalDate birthDate) {
 
 }

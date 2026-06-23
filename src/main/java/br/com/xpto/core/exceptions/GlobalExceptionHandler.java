@@ -13,17 +13,27 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(ApiException.class)
   public ResponseEntity<ErrorResponse> handleApi(ApiException ex) {
-    return ResponseEntity
-        .status(ex.getStatus())
+    return ResponseEntity.status(ex.getStatus())
         .body(new ErrorResponse(ex.getStatus().value(), ex.getMessage(), Instant.now()));
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
     String message = ex.getBindingResult().getFieldErrors().stream()
-        .map(FieldError::getDefaultMessage)
+        .map(error -> error.getField() + ": " + error.getDefaultMessage())
         .collect(Collectors.joining(", "));
+    return ResponseEntity.badRequest().body(new ErrorResponse(400, message, Instant.now()));
+  }
+
+  @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+  public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
     return ResponseEntity.badRequest()
-        .body(new ErrorResponse(400, message, Instant.now()));
+        .body(new ErrorResponse(400, "Corpo da requisição inválido ou malformado", Instant.now()));
+  }
+
+  @ExceptionHandler(Exception.class)
+  public ResponseEntity<ErrorResponse> handleFallback(Exception ex) {
+    return ResponseEntity.internalServerError()
+        .body(new ErrorResponse(500, "Erro interno no servidor", Instant.now()));
   }
 }
