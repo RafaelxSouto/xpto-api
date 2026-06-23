@@ -126,4 +126,8 @@ public class User implements UserDetails {
   public boolean isEnabled() {
     return status == UserStatus.ACTIVE;
   }
+
+  public String getUserName() {
+    return userName;
+  }
 }
